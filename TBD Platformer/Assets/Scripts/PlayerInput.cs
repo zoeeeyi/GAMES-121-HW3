@@ -10,34 +10,27 @@ namespace CustomPlatformerPhysics2D
     [RequireComponent(typeof(Renderer))]
     public class PlayerInput : MonoBehaviour
     {
-        [Space]
-        [Header("General Properties")]
+        [Title("General Properties")]
         [SerializeField] SavePointController m_savePointController;
         bool m_freezeMovement = false;
         Vector2 m_input;
-        Vector3 m_velocity;
-        Vector3 m_displarcement;
+        Vector3 m_inputVelocity;
+        Vector3 m_displacement;
         PlayerController m_controller;
         Animator m_animator;
         Renderer m_rend;
-        PlayerState m_playerState;
+        GameManager m_gameManager;
 
-        enum PlayerState
-        {
-            Normal,
-            Jumping
-        }
-
-        [Space]
-        [Header("Horizontal Movement Properties")]
+        [Title("Horizontal Movement Properties")]
         [SerializeField] float m_xMoveSpeed = 6;
         [SerializeField] float m_xAccelerationTimeGrounded = 0.1f;
         [SerializeField] float m_xAccelerationTimeAir = 0.2f;
+        [SerializeField] float m_xDecelerationTimeGrounded = 0.1f;
+        [SerializeField] float m_xDecelerationTimeAir = 0.4f;
         float m_velocityXSmoothing;
+        float m_lastTargetXVelocity = 0;
 
-
-        [Space]
-        [Header("Vertical Movement Properties")]
+        [Title("Vertical Movement Properties")]
         [SerializeField] float m_maxJumpHeight = 4;
         [SerializeField] float m_minJumpHeight = 1;
         [SerializeField] float m_timeToJumpApex = 0.4f;
@@ -45,40 +38,45 @@ namespace CustomPlatformerPhysics2D
         float m_gravity;
         float m_maxJumpVelocity;
         float m_minJumpVelocity;
+        float m_maxAllowedVelocityY;
         //It's more intuitive to set jump height and time than to set gravity and initial velocity.
         //We can calculate gravity and jumpVelocity with these two data.
 
-        [Space]
-        [Header("Wall Movement Properties")]
+        [Title("Wall Movement Properties")]
+        //Wall jump parameters
+        [SerializeField] bool m_wallJumpActivate = true;
+        [ShowIfGroup("m_wallJumpActivate")]
+        [BoxGroup("m_wallJumpActivate/Wall Jump")][SerializeField] Vector2 m_wallJumpClimb = new Vector2(7.5f, 16);
+        [BoxGroup("m_wallJumpActivate/Wall Jump")][SerializeField] Vector2 m_wallJumpOff = new Vector2(8.5f, 7);
+        [BoxGroup("m_wallJumpActivate/Wall Jump")][SerializeField] Vector2 m_wallLeap = new Vector2(18, 19);
+        //Specifically for wall leaping, we want to temporarily pause player on each leap so that they don't slide down
+        [BoxGroup("m_wallJumpActivate/Wall Jump")][SerializeField] public float m_wallStickTime = 0.15f;
+        [BoxGroup("m_wallJumpActivate/Wall Jump")][SerializeField] public float m_ceilingStickTime = 0.15f;
+        float m_timeToWallUnstick;
+        float m_timeToCeilUnstick;
+        bool m_stickToSlopeCeiling = false;
+        bool m_stickToAbsoluteCeiling = false;
+
         //Wall slide parameter
         [BoxGroup("Wall Slide")][SerializeField] float m_wallSlideSpeedMax = 3;
         [BoxGroup("Wall Slide")][SerializeField] float m_wallSlideGravBuffer = 0.5f;
-        //Wall jump parameters
-        [SerializeField] bool m_wallJumpActivate = true;
-        [HideIfGroup("m_wallJumpActivate")]
-        [BoxGroup("m_wallJumpActivate/Wall Jump")][SerializeField] Vector2 m_wallJumpClimb;
-        [BoxGroup("m_wallJumpActivate/Wall Jump")][SerializeField] Vector2 m_wallJumpOff;
-        [BoxGroup("m_wallJumpActivate/Wall Jump")][SerializeField] Vector2 m_wallLeap;
-        //Specifically for wall leaping, we want to temporarily pause player on each leap so that they don't slide down
-        [BoxGroup("m_wallJumpActivate/Wall Jump")][SerializeField] public float m_wallStickTime = 0.25f;
-        float m_timeToWallUnstick;
 
-        private void OnEnable()
+        /*private void OnEnable()
         {
             posCharacter = m_savePointController.character1LocalPos + transform.position;
             posCharacterFlipped = m_savePointController.character2LocalPos + transform.position;
 
             GameObject.Find("GameManager").GetComponent<GameManager>().playerInputParent = this;
-        }
+        }*/
 
         private void Start()
         {
             m_controller = GetComponent<PlayerController>();
             m_rend = GetComponent<Renderer>();
             m_animator = GetComponent<Animator>();
-
+            m_gameManager = GameObject.Find("GameManager").GetComponent<GameManager>();
             //Save Point
-            transform.position = m_savePointController.lastSavePos;
+            //transform.position = m_savePointController.lastSavePos;
 
             //Movement Properties Calculation
             m_gravity = -2 * m_maxJumpHeight / Mathf.Pow(m_timeToJumpApex, 2);
@@ -86,111 +84,145 @@ namespace CustomPlatformerPhysics2D
             m_maxJumpVelocity = (-1) * m_gravity * m_timeToJumpApex;
             //vt = vo + gt
             m_minJumpVelocity = -Mathf.Sign(m_gravity) * Mathf.Sqrt(2 * Mathf.Abs(m_gravity) * m_minJumpHeight);
-            m_playerState = PlayerState.Normal;
+            m_maxAllowedVelocityY = m_gameManager.GetMaxAllowedYVelocity();
+
+            m_timeToWallUnstick = m_wallStickTime;
+            m_timeToCeilUnstick = m_ceilingStickTime;
         }
 
         void Update()
         {
-            if (m_freezeMovement)
+            if (m_freezeMovement) return;
+
+            if (m_controller.GetLastDisplacement().y < -m_maxAllowedVelocityY)
             {
+                CalculateMovement(false);
                 return;
             }
 
-            //Get inputs
+            //Get basic movement inputs
             m_input = new Vector2(Input.GetAxis("Horizontal"), Input.GetAxis("Vertical"));
 
-            //I stopped here!
-            if (m_input.x > 0)
+            //For animation! Turn the player when they change direction
+            if (m_input.x > 0) transform.localScale = new Vector3(1, transform.localScale.y, transform.localScale.z);
+            else if (m_input.x < 0) transform.localScale = new Vector3(-1, transform.localScale.y, transform.localScale.z);
+
+            //Vertical movement calculation
+            //Check if the player is on the ground
+            bool _isGrounded = m_controller.getCollisionInfo().below;
+            bool _isCeiling = m_controller.getCollisionInfo().above;
+            if (_isGrounded || _isCeiling) m_animator.SetBool("isJumping", false);
+            //Reset vertical velocity to 0 when on the ground or touching the ceiling
+            if (_isGrounded || _isCeiling)
             {
-                transform.localScale = new Vector3(1, transform.localScale.y, transform.localScale.z);
+                m_inputVelocity.y = 0;
             }
-            else if (m_input.x < 0)
+
+            if (_isGrounded || _isCeiling) m_isJumping = false;
+
+            //Calculate horizontal velocity
+            float _targetVelocityX = m_input.x * m_xMoveSpeed;
+            if (Mathf.Sign(_targetVelocityX) == Mathf.Sign(m_lastTargetXVelocity) && (Mathf.Abs(_targetVelocityX) - Mathf.Abs(m_lastTargetXVelocity) < 0))
             {
-                transform.localScale = new Vector3(-1, transform.localScale.y, transform.localScale.z);
+                m_inputVelocity.x = Mathf.SmoothDamp(m_inputVelocity.x, _targetVelocityX, ref m_velocityXSmoothing, (_isGrounded) ? m_xDecelerationTimeGrounded : m_xDecelerationTimeAir);
+            } else
+            {
+                m_inputVelocity.x = Mathf.SmoothDamp(m_inputVelocity.x, _targetVelocityX, ref m_velocityXSmoothing, (_isGrounded) ? m_xAccelerationTimeGrounded : m_xAccelerationTimeAir);
             }
+            m_lastTargetXVelocity = _targetVelocityX;
 
-            bool isGrounded = (m_controller.collisionInfo.above || m_controller.collisionInfo.below);
-
-            if (isGrounded) m_animator.SetBool("isJumping", false);
-
-            //Calculate movement data
-            float targetVelocityX = m_input.x * parent.moveSpeed;
-            m_velocity.x = Mathf.SmoothDamp(m_velocity.x, targetVelocityX, ref m_velocityXSmoothing, (isGrounded) ? parent.xAccelerationTimeGrounded : parent.xAccelerationTimeAir);
-
-            //Wall jump
-            int wallDirX = (m_controller.collisionInfo.left) ? -1 : 1;
-
-            //Wall sliding
-            bool wallSliding = false;
-            //if we are sliding on the wall, vertical speed is reduced (max 3)
-            if ((m_controller.collisionInfo.left || m_controller.collisionInfo.right) && (!m_controller.collisionInfo.below) && m_velocity.y < 0)
+            //Wall sliding, vertical speed reduced
+            int _wallDirX = (m_controller.getCollisionInfo().left) ? -1 : 1;
+            bool _wallSliding = false;
+            if ((m_controller.getCollisionInfo().left || m_controller.getCollisionInfo().right) && (!_isGrounded))
             {
-                wallSliding = true;
-
-                /*if(velocity.y < -parent.wallSlideSpeedMax)
+                if (m_inputVelocity.y < 0)
                 {
-                    velocity.y = -parent.wallSlideSpeedMax;
-                }*/
+                    _wallSliding = true;
 
-                if (m_timeToWallUnstick > 0)
-                {
-                    m_velocityXSmoothing = 0;
-                    m_velocity.x = 0;
-
-                    if (m_input.x != wallDirX && (m_input.x != 0))
+                    //Set maximum speed
+                    if (m_inputVelocity.y > -m_wallSlideSpeedMax)
                     {
-                        m_timeToWallUnstick -= Time.deltaTime;
+                        m_inputVelocity.y = -m_wallSlideSpeedMax;
+                    }
+
+                    //Before the player jump off/leap, there will be a temperory gap before the action happens
+                    if (m_timeToWallUnstick > 0)
+                    {
+                        m_velocityXSmoothing = 0;
+                        m_inputVelocity.x = 0;
+
+                        //Can only start counting when the x input does not point towards wall
+                        if (m_input.x != _wallDirX && (m_input.x != 0))
+                        {
+                            m_timeToWallUnstick -= Time.deltaTime;
+                        }
+                        else
+                        {
+                            m_timeToWallUnstick = m_wallStickTime;
+                        }
+                    }
+                }
+
+                if (m_controller.getCollisionInfo().touchSlopeCeiling)
+                {
+                    m_stickToSlopeCeiling = true;
+                }
+
+                if (m_stickToSlopeCeiling && m_input.x == _wallDirX && (m_input.x != 0))
+                {
+                    if (m_timeToCeilUnstick > 0)
+                    {
+                        m_timeToCeilUnstick -= Time.deltaTime;
                     }
                     else
                     {
-                        m_timeToWallUnstick = parent.wallStickTime;
+                        m_stickToSlopeCeiling = false;
+                        m_timeToCeilUnstick = m_ceilingStickTime;
                     }
-                }
-                else
+                } else
                 {
-                    m_timeToWallUnstick = parent.wallStickTime;
+                    m_stickToSlopeCeiling = false;
                 }
             }
-
-            //Reset vertical velocity to 0 when on the ground or touching the ceiling
-            if (isGrounded)
+            else
             {
-                m_velocity.y = 0;
+                m_stickToSlopeCeiling = false;
+                m_timeToCeilUnstick = m_ceilingStickTime;
+                m_timeToWallUnstick = m_wallStickTime;
             }
-
 
             if (Input.GetKeyDown(KeyCode.Space))
             {
                 m_animator.SetBool("isJumping", true);
 
-                if (wallSliding)
+                if (_wallSliding)
                 {
-                    //Jump climb the wall
-                    if (parent.wallJumpActivate)
+                    //Jump climb/Leap the wall
+                    if (m_wallJumpActivate)
                     {
-                        if (wallDirX == m_input.x)
+                        if (_wallDirX == m_input.x)
                         {
-                            m_velocity.x = -wallDirX * parent.wallJumpClimb.x;
-                            m_velocity.y = parent.wallJumpClimb.y;
+                            m_inputVelocity.x = -_wallDirX * m_wallJumpClimb.x;
+                            m_inputVelocity.y = m_wallJumpClimb.y;
                         }
                         else
                         {
-                            m_velocity.x = -wallDirX * parent.wallLeap.x;
-                            m_velocity.y = parent.wallLeap.y;
+                            m_inputVelocity.x = -_wallDirX * m_wallLeap.x;
+                            m_inputVelocity.y = m_wallLeap.y;
                         }
                     }
                     //Jump off the wall
                     if (m_input.x == 0)
                     {
-                        m_velocity.x = -wallDirX * parent.wallJumpOff.x;
-                        m_velocity.y = (parent.wallJumpActivate) ? parent.wallJumpClimb.y : 0;
+                        m_inputVelocity.x = -_wallDirX * m_wallJumpOff.x;
+                        m_inputVelocity.y = (m_wallJumpActivate) ? m_wallJumpClimb.y : 0;
                     }
                     //Leap between two walls
                 }
-                if (isGrounded)
+                if (_isGrounded)
                 {
-                    audioManager.playAudioClip("Jump");
-                    m_velocity.y = parent.maxJumpVelocity;
+                    m_inputVelocity.y = m_maxJumpVelocity;
                     m_isJumping = true;
                 }
             }
@@ -201,75 +233,37 @@ namespace CustomPlatformerPhysics2D
             {
                 if (m_isJumping)
                 {
-                    if (m_velocity.y > parent.minJumpVelocity)
+                    if (m_inputVelocity.y > m_minJumpVelocity)
                     {
-                        m_velocity.y = parent.minJumpVelocity;
+                        m_inputVelocity.y = m_minJumpVelocity;
                     }
                 }
                 m_isJumping = false;
             }
 
-            if (Input.GetKeyDown(KeyCode.E))
-            {
-                if (((!inverseGravity) && (parent.characterXGap > 0))//normal character on right.
-                    || ((inverseGravity) && (parent.characterXGap < 0))) //flipped character on right.
-                {
-                    m_centerDashDir = -1;
-                }
-                else if (((!inverseGravity) && (parent.characterXGap < 0))//normal character on left.
-                    || ((inverseGravity) && (parent.characterXGap > 0)))//flipped character on left.
-                {
-                    m_centerDashDir = 1;
-                }
-                else
-                {
-                    m_centerDashDir = 0;
-                }
+            CalculateMovement(_wallSliding);
+        }
 
-                //velocity.x = 0;
-            }
-
-            if ((state == PlayerInputParent.PlayerState.CenterDash) && (m_controller.collisionInfo.left || m_controller.collisionInfo.right))
-            {
-                m_velocity.x = 0;
-                parent.state = PlayerInputParent.PlayerState.Normal;
-            }
-
-            switch (state)
-            {
-                /*case PlayerInputParent.PlayerState.CenterDash:
-                    velocity.x = Mathf.SmoothDamp(velocity.x, centerDashDir * parent.centerDashVelocityX, ref velocityXSmoothing, parent.xAccelerationTimeAir);
-                    float DisplacementX = velocity.x * Time.deltaTime;
-                    float nextPos = transform.position.x + DisplacementX;
-                    if (centerDashDir * (nextPos - parent.characterCenter.x) > 0)
-                    {
-                        Debug.Log("Trigger");
-                        displacement.x = parent.characterCenter.x - transform.position.x;
-                        displacement.y = 0;
-                    }
-                    else
-                    {
-                        displacement.x = DisplacementX;
-                        displacement.y = 0;
-                    }
-                    break;*/
-
-                default:
-                    //velocity.x = input.x * moveSpeed;
-                    displacement.x = m_velocity.x * Time.deltaTime;
-                    float yInitialVelocity = m_velocity.y;
-                    m_gravity = (wallSliding) ? (parent.wallSlideGravBuffer * parent.gravity) : parent.gravity;
-                    m_velocity.y += m_gravity * Time.deltaTime;
-                    displacement.y = (Mathf.Pow(m_velocity.y, 2) - Mathf.Pow(yInitialVelocity, 2)) / (2 * m_gravity);
-                    break;
-            }
-
-            m_controller.Move(displacement, false, false, true);
+        void CalculateMovement(bool _wallSliding)
+        {
+            //Calculate movement data and send it to player controller
+            m_displacement.x = m_inputVelocity.x * Time.deltaTime;
+            float yInitialVelocity = m_inputVelocity.y;
+            float _gravity = (_wallSliding) ? (m_wallSlideGravBuffer * m_gravity) : m_gravity;
+            m_inputVelocity.y += _gravity * Time.deltaTime;
+            m_displacement.y = (Mathf.Pow(m_inputVelocity.y, 2) - Mathf.Pow(yInitialVelocity, 2)) / (2 * _gravity); //vt^2 - v0^2 = 2 * a * s
+            if (m_stickToSlopeCeiling) m_displacement.y = 0;
+            m_controller.Move(m_displacement, false, false, true);
         }
 
         public Vector2 getInput()
         {
             return this.m_input;
+        }
+
+        public Vector2 getDisplacement()
+        {
+            return this.m_displacement;
         }
     }
 }

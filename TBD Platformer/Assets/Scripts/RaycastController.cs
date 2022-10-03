@@ -20,6 +20,7 @@ public class RaycastController : MonoBehaviour
 
     protected virtual void Start()
     {
+        m_collider = GetComponent<BoxCollider2D>();
         CalculateRaySpacing();
     }
 
