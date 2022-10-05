@@ -27,5 +27,9 @@ public class SpeedBar : MonoBehaviour
         m_speedTarget = Mathf.Abs(Mathf.Min(m_gameManager.GetCurrentYVelocity(), 0));
         m_currentSpeed = Mathf.SmoothDamp(m_currentSpeed, m_speedTarget, ref m_currentSpeedSmooth, m_currentSpeedSmoothTime);
         m_slider.value = m_currentSpeed;
+        if (m_currentSpeed >= m_gameManager.GetMaxAllowedYVelocity() && m_gameManager.GetGameStart() && !m_gameManager.GetGameOver())
+        {
+            m_gameManager.SetGameOver("Falling too fast!");
+        }
     }
 }

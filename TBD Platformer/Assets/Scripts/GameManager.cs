@@ -2,6 +2,7 @@ using CustomPlatformerPhysics2D;
 using Sirenix.OdinInspector;
 using System.Collections;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -20,8 +21,14 @@ public class GameManager : MonoBehaviour
     [SerializeField] float m_maxAllowedVelocityY;
     float m_currentVelocityY;
 
+    //General
+    [SerializeField] TextMeshProUGUI m_gameOverText;
+    bool m_gameOver = false;
+    bool m_gameInitialized = false;
+
     void Start()
     {
+        m_gameOverText.gameObject.SetActive(false);
         m_currentEnergy = m_maxEnergy;
     }
 
@@ -31,6 +38,12 @@ public class GameManager : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.R))
         {
             SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+        }
+
+        if (m_gameOver)
+        {
+            m_gameOverText.gameObject.SetActive(true);
+            return;
         }
 
         m_currentVelocityY = m_playerController.GetLastDisplacement().y;
@@ -48,8 +61,18 @@ public class GameManager : MonoBehaviour
             }
         }
 
+        if (m_currentEnergy <= 0)
+        {
+            SetGameOver("Ran Out of Energy!");
+        }
+
         m_currentEnergy = Mathf.Clamp(m_currentEnergy, 0, m_maxEnergy);
-        Debug.Log(m_currentVelocityY);
+    }
+
+    public void SetEnergyLevel(float _e)
+    {
+        Mathf.Clamp(_e, 0, m_maxEnergy);
+        m_currentEnergy = _e;
     }
 
     public float GetEnergyLevel()
@@ -70,5 +93,32 @@ public class GameManager : MonoBehaviour
     public float GetCurrentYVelocity()
     {
         return m_currentVelocityY;
+    }
+
+    public void SetGameOver(string _msg)
+    {
+        this.m_gameOver = true;
+        m_gameOverText.text = "Game Over!\n" + _msg;
+    }
+
+    public void SetGameWin()
+    {
+        this.m_gameOver = true;
+        m_gameOverText.text = "Destination Reached!";
+    }
+
+    public bool GetGameOver()
+    {
+        return m_gameOver;
+    }
+
+    public void SetGameStart()
+    {
+        m_gameInitialized = true;
+    }
+
+    public bool GetGameStart()
+    {
+        return m_gameInitialized;
     }
 }

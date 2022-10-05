@@ -94,11 +94,19 @@ namespace CustomPlatformerPhysics2D
         {
             if (m_freezeMovement) return;
 
-            if (m_controller.GetLastDisplacement().y < -m_maxAllowedVelocityY)
+            if (m_gameManager.GetGameOver())
             {
+                m_inputVelocity.x = 0;
                 CalculateMovement(false);
                 return;
             }
+
+            /*if (m_controller.GetLastDisplacement().y < -m_maxAllowedVelocityY && m_gameManager.GetGameStart())
+            {
+                m_gameManager.SetGameOver();
+                CalculateMovement(false);
+                return;
+            }*/
 
             //Get basic movement inputs
             m_input = new Vector2(Input.GetAxis("Horizontal"), Input.GetAxis("Vertical"));
@@ -169,8 +177,9 @@ namespace CustomPlatformerPhysics2D
                     m_stickToSlopeCeiling = true;
                 }
 
-                if (m_stickToSlopeCeiling && m_input.x == _wallDirX && (m_input.x != 0))
+                if (m_stickToSlopeCeiling)
                 {
+                    _wallSliding = true;
                     if (m_timeToCeilUnstick > 0)
                     {
                         m_timeToCeilUnstick -= Time.deltaTime;

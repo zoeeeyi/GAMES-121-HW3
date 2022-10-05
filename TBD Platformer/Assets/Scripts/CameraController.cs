@@ -69,6 +69,7 @@ public class CameraController : MonoBehaviour
             {
                 m_cameraStartSize = m_camera.orthographicSize;
                 m_cameraInitialized = true;
+                m_gameManager.SetGameStart();
             }
         }
     }
