@@ -57,7 +57,7 @@ public class GameManager : MonoBehaviour
                 m_currentEnergy += Mathf.Abs(m_currentVelocityY) * m_energyRecoverySlide;
             } else
             {
-                m_currentEnergy += Mathf.Abs(m_currentVelocityY) * m_energyRecoveryFreefall;
+                m_currentEnergy += Mathf.Pow(Mathf.Abs(m_currentVelocityY), 2) * m_energyRecoveryFreefall;
             }
         }
 

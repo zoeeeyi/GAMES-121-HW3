@@ -57,6 +57,7 @@ public class CameraController : MonoBehaviour
         m_gameManager = GameObject.Find("GameManager").GetComponent<GameManager>();
         m_targetMaxYVelocity = m_gameManager.GetMaxAllowedYVelocity();
         m_playerInput = m_target.gameObject.GetComponent<PlayerInput>();
+        transform.position = m_target.transform.position + Vector3.back * 10;
     }
 
     private void Update()
